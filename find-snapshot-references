@@ -1,0 +1,140 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use Getopt::Long;
+use Data::Dumper;
+use File::Find;
+use File::Spec;
+
+# Options
+my $_verbose;
+my $_help;
+GetOptions(
+    "verbose" => \$_verbose,
+    "help" => \$_help,
+) or die "Error in command line arguments\n";
+
+# Help
+if ($_help) {
+
+    print "Usage: $0 [OPTIONS] FILE\n";
+    print "\n";
+    print "Options:\n";
+    print "  --help                print this help\n";
+    print "  --verbose             verbose output\n";
+    print "\n";
+    print "Example:\n";
+    print "\n";
+
+    exit;
+}
+
+# File argument
+my $file = $ARGV[0];
+if (!defined($file)) {
+    die "File argument missing\n";
+}
+if (! -f $file) {
+    die "File not found: $file\n";
+}
+
+# Lookup function
+sub find_snapshots {
+    my $path = shift or die "Path missing\n";
+    $path =~ s/\/+$//; # cut trailing slash
+
+    # Keep going one level up until dev id changes
+    my ($orig_dev) = stat($path);
+    my $root_path = $path;
+    my @parts = File::Spec->splitdir($root_path);
+    while (defined(pop @parts)) {
+        my $parent_path = File::Spec->catdir(@parts);
+        my ($dev) = stat($parent_path);
+        if ($dev != $orig_dev) {
+            # Found parent of volume (different device id)
+            last;
+        }
+        else {
+            $root_path = $parent_path;
+        }
+    }
+    if ($_verbose) {
+        warn "Found root: $root_path\n";
+    }
+
+    # Find snapshot directory
+    my $snapshot_dir;
+    for my $sub (qw(.zfs/snapshot snapshot)) {
+        my $sub_path = File::Spec->catdir($root_path, $sub);
+        if (-d $sub_path) {
+            # Found it
+            $snapshot_dir = $sub_path;
+            last;
+        }
+    }
+    if (!$snapshot_dir) {
+        die "No snapshot dir found in $root_path\n";
+    }
+    if ($_verbose) {
+        warn "Found snapshot dir: $snapshot_dir\n";
+    }
+
+    # List snapshots
+    my $snapshots = [];
+    opendir my $dh, $snapshot_dir or die "Failed to open snapshot dir: $!\n";
+    $snapshots = [
+        grep { ! /^\.{1,2}$/ } readdir($dh)
+    ];
+
+    return ($root_path, $snapshot_dir, $snapshots);
+}
+
+# Metadata
+my ($file_dev, $file_ino) = stat $file or
+    die "Failed to stat: $file\n";
+my (undef, $file_dir, $file_name) = File::Spec->splitpath($file);
+if ($_verbose) {
+    warn "File \"$file_name\" in $file_dir\n";
+}
+
+# Find snapshots
+my ($root_path, $snapshot_dir, $snapshots) = find_snapshots($file_dir);
+my $snapshot_count = scalar(@$snapshots);
+my $file_path;
+if (substr($file, 0, length($root_path)) eq $root_path) {
+    $file_path = substr($file, length($root_path) + 1);
+}
+die "Failed to determine relative file path\n" unless $file_path;
+if ($_verbose) {
+    warn "Found snapshots ($snapshot_count):\n";
+    warn "\t* $_\n" foreach @$snapshots;
+}
+
+# Look for specified file in each snapshot
+my $matched_snapshots = 0;
+for my $snapshot (@$snapshots) {
+    my $snapshot_file =
+        File::Spec->catfile($snapshot_dir, $snapshot, $file_path);
+    my $found = -f $snapshot_file;
+    next unless $found;
+
+    # Stat file in snapshot
+    my (undef, $ino) = stat $snapshot_file or
+        die "Failed to stat: $snapshot_file\n";
+    my $match = $found && $ino == $file_ino;
+
+    # Print if found in snapshot
+    if ($found && $match) {
+        $matched_snapshots++;
+        print "= $snapshot ($snapshot_file)\n";
+    }
+}
+if ($matched_snapshots) {
+    print "Found file in $matched_snapshots ".
+        "(out of $snapshot_count) snapshot(s)\n";
+}
+
+
+
