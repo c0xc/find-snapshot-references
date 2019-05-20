@@ -33,6 +33,19 @@ Usage
     = hourly.5 (/data/Share/.zfs/snapshot/hourly.5/AUTOCLEAN/cert.pem)
     Found file in 20 (out of 115) snapshot(s)
 
+For a deleted file:
+
+    # find-snapshot-references -v -l 3 /data/Share/.zfs/snapshot/nightly.0/AUTOCLEAN/key.pem
+    File "key.pem" in /data/Share/.zfs/snapshot/nightly.0/AUTOCLEAN/
+    Found root: /data/Share/.zfs
+    Parent path: /data/Share/.zfs/snapshot/nightly.0
+    Found snapshot dir: /data/Share/.zfs/snapshot
+    Relative file path: AUTOCLEAN/key.pem
+    Found snapshots (1):
+            * nightly.0
+    = nightly.0 (/data/Share/.zfs/snapshot/nightly.0/AUTOCLEAN/key.pem)
+    Found file in 1 (out of 1) snapshot(s)
+
 
 
 Author

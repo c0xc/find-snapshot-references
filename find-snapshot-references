@@ -11,9 +11,11 @@ use File::Spec;
 # Options
 my $_verbose;
 my $_help;
+my $_levels = 1;
 GetOptions(
     "verbose" => \$_verbose,
     "help" => \$_help,
+    "levels=i" => \$_levels,
 ) or die "Error in command line arguments\n";
 
 # Help
@@ -24,8 +26,10 @@ if ($_help) {
     print "Options:\n";
     print "  --help                print this help\n";
     print "  --verbose             verbose output\n";
+    print "  --level               number of fs levels to go up\n";
     print "\n";
     print "Example:\n";
+    print "$0 -l 2 /data/Temp/.zfs/snapshot/nightly.0/document.pdf\n";
     print "\n";
 
     exit;
@@ -46,22 +50,38 @@ sub find_snapshots {
     $path =~ s/\/+$//; # cut trailing slash
 
     # Keep going one level up until dev id changes
+    # That's if level == 1, which should be used if we are looking for
+    # a file that's on the live volume, e.g., "/datapool/Temp/file".
+    # If we're looking for a deleted file, we need to go
+    # more than one level up to find the filesystem root:
+    # "/datapool/Temp/.zfs/snapshot/nightly.0/file" -> "/datapool/Temp/"
     my ($orig_dev) = stat($path);
     my $root_path = $path;
+    my $first_parent; # path one level above, even if levels > 1
     my @parts = File::Spec->splitdir($root_path);
+    my $levels_climbed = 0;
     while (defined(pop @parts)) {
         my $parent_path = File::Spec->catdir(@parts);
         my ($dev) = stat($parent_path);
         if ($dev != $orig_dev) {
             # Found parent of volume (different device id)
-            last;
+            if (++$levels_climbed >= $_levels) {
+                last;
+            }
+            else {
+                $root_path = $parent_path;
+                next; # root found but keep going
+            }
         }
-        else {
-            $root_path = $parent_path;
+        if (!$levels_climbed) {
+            # No parent fs reached yet
+            $first_parent = $parent_path;
         }
+        $root_path = $parent_path; # use / if no parent found
     }
     if ($_verbose) {
         warn "Found root: $root_path\n";
+        warn "Parent path: $first_parent\n";
     }
 
     # Find snapshot directory
@@ -88,7 +108,7 @@ sub find_snapshots {
         grep { ! /^\.{1,2}$/ } readdir($dh)
     ];
 
-    return ($root_path, $snapshot_dir, $snapshots);
+    return ($root_path, $first_parent, $snapshot_dir, $snapshots);
 }
 
 # Metadata
@@ -100,14 +120,15 @@ if ($_verbose) {
 }
 
 # Find snapshots
-my ($root_path, $snapshot_dir, $snapshots) = find_snapshots($file_dir);
+my ($root_path, $parent_path, $snapshot_dir, $snapshots) = find_snapshots($file_dir);
 my $snapshot_count = scalar(@$snapshots);
 my $file_path;
-if (substr($file, 0, length($root_path)) eq $root_path) {
-    $file_path = substr($file, length($root_path) + 1);
+if (substr($file, 0, length($parent_path)) eq $parent_path) {
+    $file_path = substr($file, length($parent_path) + 1);
 }
 die "Failed to determine relative file path\n" unless $file_path;
 if ($_verbose) {
+    warn "Relative file path: $file_path\n";
     warn "Found snapshots ($snapshot_count):\n";
     warn "\t* $_\n" foreach @$snapshots;
 }
